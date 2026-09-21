@@ -5,9 +5,21 @@
 
 **纯 C# + WinForms 手写矢量绘制，零第三方依赖、零图片素材、单文件 66 KB，内存约 36~40 MB。**
 
-![姿势总览](docs/poses.png)
+| 正面肖像（应用图标用的就是它） | 侧视姿态总览 |
+|---|---|
+| ![正面肖像](docs/portrait.png) | ![姿势总览](docs/poses.png) |
 
-> 上图为程序自己渲染的姿态总览（`PuppyPetTests.exe --snapshot` 生成），11 种姿态 × 4 个动画相位。
+> 两张图都是程序自己渲染的（`PuppyPetTests.exe --portrait` / `--snapshot`）。
+
+### 造型参考
+
+狗的形象参考了一张真实的小金毛幼犬照片，提取出这些特征并用矢量画法还原：
+
+- **奶油金色的蓬松绒毛**（不是纯白也不是橘黄），边缘用一圈小圆弧做出毛茸茸的轮廓
+- **又大又圆的黑色眼睛**，每只眼睛带大小两点高光——这是最抓人的地方
+- **小巧的黑色鼻头**（圆润倒三角，带一点反光）与淡淡的 w 形嘴
+- **鼓鼓的脸颊 + 两侧小而垂的耳朵**（耳内浅、耳缘深）
+- **圆润的四肢**，脚掌上有黑色肉垫（趴着、被拎起来时能看见）
 
 ## 特性
 
@@ -48,19 +60,20 @@
 | 文件 | 用途 |
 |---|---|
 | `dist/PuppyPet.exe` | 桌宠本体（约 66 KB） |
-| `dist/PuppyPetTests.exe` | 自测程序（37 项检查 + 姿态图/图标生成） |
+| `dist/PuppyPetTests.exe` | 自测程序（40 项检查 + 姿态图/肖像/图标生成） |
 
 ## 自测
 
 ```cmd
-dist\PuppyPetTests.exe                              :: 跑 37 项断言
-dist\PuppyPetTests.exe --snapshot docs\poses.png    :: 生成姿态总览图
-dist\PuppyPetTests.exe --icon assets\puppy.ico      :: 生成应用图标
+dist\PuppyPetTests.exe                                :: 跑 40 项断言
+dist\PuppyPetTests.exe --snapshot docs\poses.png      :: 生成姿态总览图
+dist\PuppyPetTests.exe --portrait docs\portrait.png   :: 生成正面肖像图
+dist\PuppyPetTests.exe --icon assets\puppy.ico        :: 用肖像生成应用图标
 ```
 
 自测覆盖：初始状态、悬停变开心、摸头/挠痒来回切换、**鼠标移开 10 秒后偷偷溜走**、长时间无人看管时
 自己跑动且不越界、拖动→下落→落地→抖毛、点击起跳、卡顿保护、暂停、同种子轨迹可复现、命中测试，
-以及 11 种姿态的绘制（覆盖率、不溢出画布、左右转身镜像一致）。
+以及 11 种姿态的绘制（覆盖率、不溢出画布、左右转身镜像一致）、正面肖像的绘制与「黑色五官占比」校验。
 
 ## 交互说明
 
@@ -77,6 +90,7 @@ dist\PuppyPetTests.exe --icon assets\puppy.ico      :: 生成应用图标
 - **鼠标穿透**：处理 `WM_NCHITTEST`，光标落在透明像素时返回 `HTTRANSPARENT`，所以虽然窗口是矩形，
   但不会挡住底下的图标和窗口。
 - **矢量绘制，无素材**：整只狗由圆角矩形、椭圆、贝塞尔曲线拼出来（`src/DogArt.cs`），
+  侧视图（11 种姿态）与正面肖像（图标/展示）共用同一套配色与五官画法；
   换姿态只是改几个参数，因此仓库里没有任何 PNG/精灵图，exe 只有 66 KB。
 - **自适应帧率**：被摸/移动时 30 FPS，待机 15 FPS，睡觉 6 FPS；不播放动画时不重绘。
 - **零分配主循环**：画刷、画笔、字体、渐变全部 static 复用，托盘图标只生成一次。
@@ -94,8 +108,9 @@ puppy-pet/
 │   ├── Config.cs        # config.ini 读写 + 开机自启
 │   ├── Program.cs       # 入口（单实例）
 │   └── SelfTest.cs      # 自测 + 姿态图 + 图标生成
-├── assets/puppy.ico     # 由程序自己画出来的应用图标
-├── docs/poses.png       # 姿态总览（生成的）
+├── assets/puppy.ico     # 由程序自己画出来的应用图标（正面肖像）
+├── docs/portrait.png    # 正面肖像（生成的）
+├── docs/poses.png       # 侧视姿态总览（生成的）
 ├── dist/                # 编译产物
 ├── build.cmd / build.sh # 一键编译
 └── run.cmd              # 一键运行

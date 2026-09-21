@@ -57,6 +57,13 @@ namespace PuppyPet
                 return 0;
             }
 
+            if (args.Length >= 2 && args[0] == "--portrait")
+            {
+                PortraitSheet(args[1]);
+                Console.WriteLine("已生成正面肖像图：" + args[1]);
+                return 0;
+            }
+
             if (args.Length >= 2 && args[0] == "--icon")
             {
                 WriteIcon(args[1], new int[] { 16, 24, 32, 48, 64 });
@@ -222,6 +229,17 @@ namespace PuppyPet
             Check("每种姿态都有合理的图形覆盖率(2%~65%)", allInk, detail);
             Check("图形没有大量溢出画布边缘", allInside, detail);
 
+            // 正面肖像
+            double pcov, pedge;
+            using (Bitmap port = new Bitmap(DogArt.CanvasW, DogArt.CanvasH, PixelFormat.Format32bppPArgb))
+            {
+                using (Graphics pg = Graphics.FromImage(port)) DogArt.DrawPortrait(pg, 0.4f);
+                Measure(port, out pcov, out pedge);
+            }
+            Check("正面肖像能画出来且覆盖率合理(15%~70%)", pcov > 0.15 && pcov < 0.70, "覆盖率=" + pcov.ToString("0.00"));
+            Check("正面肖像不溢出画布", pedge < 0.12, "贴边率=" + pedge.ToString("0.00"));
+            Check("肖像的眼睛够大够黑（照片特征）", PortraitEyeDark(0.4f) > 0.02, "黑色像素占比=" + PortraitEyeDark(0.4f).ToString("0.000"));
+
             double covR, edgeR, covL, edgeL;
             Bitmap flipA = RenderPose(PetState.Walk, 0.3f, 1, out covR, out edgeR);
             Bitmap flipB = RenderPose(PetState.Walk, 0.3f, -1, out covL, out edgeL);
@@ -276,6 +294,61 @@ namespace PuppyPet
             return bmp;
         }
 
+        /// <summary>统计肖像里近黑像素占比（眼睛 + 鼻子 + 肉垫）</summary>
+        static double PortraitEyeDark(float t)
+        {
+            using (Bitmap b = new Bitmap(DogArt.CanvasW, DogArt.CanvasH, PixelFormat.Format32bppPArgb))
+            {
+                using (Graphics g = Graphics.FromImage(b)) DogArt.DrawPortrait(g, t);
+                int hit = 0;
+                for (int y = 0; y < b.Height; y++)
+                    for (int x = 0; x < b.Width; x++)
+                    {
+                        Color c = b.GetPixel(x, y);
+                        if (c.A > 200 && c.R < 70 && c.G < 70 && c.B < 70) hit++;
+                    }
+                return (double)hit / (b.Width * b.Height);
+            }
+        }
+
+        /// <summary>正面肖像多尺寸对照图</summary>
+        static void PortraitSheet(string path)
+        {
+            int[] scales = { 1, 2, 3 };
+            int pad = 14;
+            int w = pad;
+            foreach (int s in scales) w += DogArt.CanvasW * s + pad;
+            int h = DogArt.CanvasH * 3 + pad * 2 + 24;
+
+            using (Bitmap sheet = new Bitmap(w, h, PixelFormat.Format32bppPArgb))
+            {
+                using (Graphics g = Graphics.FromImage(sheet))
+                {
+                    g.SmoothingMode = SmoothingMode.AntiAlias;
+                    g.Clear(Color.FromArgb(255, 246, 242, 234));
+                    using (Font title = new Font("Segoe UI", 10f, FontStyle.Bold))
+                    using (SolidBrush dark = new SolidBrush(Color.FromArgb(255, 90, 74, 50)))
+                    {
+                        g.DrawString("PuppyPet portrait  (1x / 2x / 3x)", title, dark, pad, 6);
+                        int x = pad;
+                        foreach (int s in scales)
+                        {
+                            GraphicsState st = g.Save();
+                            g.TranslateTransform(x, pad + 24);
+                            g.ScaleTransform(s, s);
+                            DogArt.DrawPortrait(g, 0.4f);
+                            g.Restore(st);
+                            g.DrawRectangle(new Pen(Color.FromArgb(40, 0, 0, 0)), x, pad + 24, DogArt.CanvasW * s - 1, DogArt.CanvasH * s - 1);
+                            x += DogArt.CanvasW * s + pad;
+                        }
+                    }
+                }
+                string dir = Path.GetDirectoryName(Path.GetFullPath(path));
+                if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+                sheet.Save(path, ImageFormat.Png);
+            }
+        }
+
         // ---------------------------------------------------------- 生成 .ico
         /// <summary>把小狗画成多尺寸 32 位 ICO（BMP 条目，兼容性最好）</summary>
         static void WriteIcon(string path, int[] sizes)
@@ -317,16 +390,12 @@ namespace PuppyPet
                 {
                     g.SmoothingMode = SmoothingMode.AntiAlias;
                     g.Clear(Color.Transparent);
-                    float k = size / 96f;                  // 取头部区域铺满
+                    // 用正面肖像，小尺寸下也能看清那张脸
+                    float k = size / 74f;
+                    g.TranslateTransform(size / 2f, size / 2f);
                     g.ScaleTransform(k, k);
-                    g.TranslateTransform(-30f, -18f);
-                    DogPose p = new DogPose();
-                    p.State = PetState.Happy;
-                    p.Facing = 1;
-                    p.Squash = 1f;
-                    p.Mood = 1f;
-                    p.T = 0.4f;
-                    DogArt.Draw(g, p);
+                    g.TranslateTransform(-66f, -48f);
+                    DogArt.DrawPortrait(g, 0.4f);
                 }
 
                 int stride = size * 4;
