@@ -1,0 +1,11 @@
+# 编译产物（构建时重新生成）
+*.pdb
+*.obj
+*.user
+
+# 编辑器 / 系统文件
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.log
