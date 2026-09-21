@@ -47,7 +47,7 @@ namespace PuppyPet
         readonly DogBrain _brain;
         readonly Timer _timer;
         readonly ContextMenuStrip _menu;
-        readonly ToolStripMenuItem _miShow, _miPause, _miTop, _miAuto;
+        readonly ToolStripMenuItem _miShow, _miPause, _miTop, _miAuto, _miFull;
         NotifyIcon _tray;
         IntPtr _trayIcon = IntPtr.Zero;
 
@@ -77,6 +77,7 @@ namespace PuppyPet
 
             _scale = Config.GetFloat("scale", 1f);
             _brain.Paused = Config.GetInt("paused", 0) == 1;
+            _brain.FullScreen = Config.GetInt("fullscreen", 1) == 1;
             TopMost = Config.GetInt("topmost", 1) == 1;
 
             _timer = new Timer();
@@ -100,6 +101,8 @@ namespace PuppyPet
             miSize.DropDownItems.Add(new ToolStripMenuItem("中", null, delegate { SetScale(1.0f); }));
             miSize.DropDownItems.Add(new ToolStripMenuItem("大", null, delegate { SetScale(1.35f); }));
 
+            _miFull = new ToolStripMenuItem("满屏跑动", null, OnToggleFull);
+            _miFull.Checked = _brain.FullScreen;
             _miTop = new ToolStripMenuItem("总在最前", null, OnToggleTop);
             _miTop.Checked = TopMost;
             _miAuto = new ToolStripMenuItem("开机自动启动", null, OnToggleAuto);
@@ -110,6 +113,7 @@ namespace PuppyPet
             _menu.Items.Add(new ToolStripSeparator());
             _menu.Items.Add(miAct);
             _menu.Items.Add(miSize);
+            _menu.Items.Add(_miFull);
             _menu.Items.Add(_miTop);
             _menu.Items.Add(_miAuto);
             _menu.Items.Add(new ToolStripSeparator());
@@ -194,16 +198,17 @@ namespace PuppyPet
         void SyncWindow()
         {
             int w = _bmpW, h = _bmpH;
-            float bodyCY = _brain.Y + (DogArt.CanvasH * 0.5f - 60f) * _scale;
+            float bodyCY = _brain.VisualY + (DogArt.CanvasH * 0.5f - 60f) * _scale;
             int left = (int)Math.Round(_brain.X - w * 0.5f);
             int top = (int)Math.Round(bodyCY - h * 0.5f);
             if (Left != left || Top != top) Location = new Point(left, top);
 
             // 落到屏幕外时拉回来
             Rectangle wa = Screen.PrimaryScreen.WorkingArea;
-            if (Top > wa.Bottom || Top < wa.Top - 200 || Left < wa.Left - 300 || Left > wa.Right + 300)
+            if (Top > wa.Bottom + 60 || Top < wa.Top - 300 || Left < wa.Left - 300 || Left > wa.Right + 300)
             {
                 _brain.DragTo(wa.Left + wa.Width * 0.5f, wa.Bottom - 80);
+                _brain.GoToGround(Now);
             }
         }
 
@@ -349,6 +354,14 @@ namespace PuppyPet
             _brain.Paused = !_brain.Paused;
             _miPause.Checked = _brain.Paused;
             Config.SetInt("paused", _brain.Paused ? 1 : 0);
+        }
+
+        void OnToggleFull(object sender, EventArgs e)
+        {
+            _brain.FullScreen = !_brain.FullScreen;
+            _miFull.Checked = _brain.FullScreen;
+            Config.SetInt("fullscreen", _brain.FullScreen ? 1 : 0);
+            if (!_brain.FullScreen && !_brain.OnGround) _brain.GoToGround(Now);
         }
 
         void OnToggleTop(object sender, EventArgs e)

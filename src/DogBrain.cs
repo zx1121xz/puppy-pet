@@ -14,6 +14,7 @@ namespace PuppyPet
         Happy,    // 被摸头：开心蹦跳
         Scratch,  // 挠痒
         Sneak,    // 偷偷溜走
+        Hover,    // 悬在半空 / 飞向空中目标
         Drag,     // 被拎起来
         Fall,     // 下落
         Shake     // 落地后抖毛
@@ -44,6 +45,8 @@ namespace PuppyPet
         public const float SneakSpeed = 104f;
         public const float Gravity = 1600f;
         public const float HopSpeed = 430f;
+        public const float AirSpeed = 148f;      // 空中机动速度
+        public const float HoverBob = 3.6f;      // 悬停时的上下浮动幅度
 
         public Rectangle Bounds;         // 活动范围（屏幕工作区坐标）
         public float Width = 132f;
@@ -61,9 +64,11 @@ namespace PuppyPet
         public float Squash = 1f;
         public float Mood;
         public bool Blink;
+        public double Now;              // 最近一次 Update 的时间戳（悬停浮动用）
         public bool Hovering;
         public bool Paused;
         public float SpeedScale = 1f;
+        public bool FullScreen = true;      // true: 满屏跑动；false: 只在屏幕底部活动
 
         readonly Random _rng;
         double _nextDecision;
@@ -72,7 +77,9 @@ namespace PuppyPet
         double _hoverAt = -1;         // 鼠标进入的时刻
         double _lastTouch = -1;       // 最近一次被摸/被拖
         double _happyUntil = -1;      // 点击后保持开心的截止时刻
+        double _lastAir = 0;          // 最近一次待在空中的时刻（用于保证满屏跑动）
         float _targetX;
+        float _targetY;
         bool _sneaking;
 
         public DogBrain(Rectangle bounds, int seed)
@@ -84,6 +91,7 @@ namespace PuppyPet
             _nextDecision = 1.2;
             _nextBlink = 2.0;
             _targetX = X;
+            _targetY = Y;
             _hoverAt = -1;
             _lastTouch = -1;
         }
@@ -91,6 +99,14 @@ namespace PuppyPet
         public float GroundY { get { return Bounds.Bottom - Height * 0.5f - 8f; } }
 
         public bool IsResting { get { return State == PetState.Sit || State == PetState.Sleep || State == PetState.Idle; } }
+        public bool IsFloating { get { return !OnGround && (State == PetState.Hover || State == PetState.Happy || State == PetState.Scratch); } }
+        public bool OnGround { get { return Y >= GroundY - 0.5f; } }
+        /// <summary>实际绘制用的 Y：悬停时轻轻上下浮动</summary>
+        public float VisualY
+        {
+            get { return IsFloating ? Y + (float)Math.Sin(Now * 2.6) * HoverBob : Y; }
+        }
+        PetState RestState() { return OnGround ? PetState.Idle : PetState.Hover; }
         public bool IsMoving { get { return State == PetState.Walk || State == PetState.Run || State == PetState.Sneak; } }
 
         // ---------------------------------------------------------------- 事件
@@ -119,7 +135,7 @@ namespace PuppyPet
             _leaveAt = now;            // 从这里开始计时，10 秒后偷偷跑掉
             if (State == PetState.Happy || State == PetState.Scratch)
             {
-                SetState(PetState.Idle, now);
+                SetState(RestState(), now);
             }
         }
 
@@ -165,8 +181,16 @@ namespace PuppyPet
         {
             _happyUntil = now + hold;
             if (State == PetState.Drag || State == PetState.Fall) return;
-            Airborne = true;
-            VY = -HopSpeed * 0.86f;
+            if (OnGround)
+            {
+                Airborne = true;
+                VY = -HopSpeed * 0.86f;
+            }
+            else
+            {
+                Airborne = false;
+                _targetY = Math.Max(Bounds.Top + Height * 0.6f, Y - 26f);   // 空中往上蹦一下
+            }
             SetState(PetState.Happy, now);
         }
 
@@ -190,9 +214,11 @@ namespace PuppyPet
         {
             if (dt < 0) dt = 0;
             if (dt > 0.12) dt = 0.12;          // 卡顿保护，避免瞬移
+            Now = now;
             if (Paused) return;
 
             StateTime += (float)dt;
+            if (!OnGround) _lastAir = now;
 
             // 眨眼
             if (Blink)
@@ -235,20 +261,8 @@ namespace PuppyPet
                 Phase = 0f;
             }
 
-            // 空中物理
-            if (Airborne)
-            {
-                VY += Gravity * (float)dt;
-                Y += VY * (float)dt;
-                if (Y >= GroundY)
-                {
-                    Y = GroundY;
-                    Airborne = false;
-                    VY = 0f;
-                    // 被摸着的时候不要抖毛打断互动
-                    SetState(Hovering ? PetState.Happy : PetState.Shake, now);
-                }
-            }
+            // 空中物理（自由落体）
+            if (Airborne && State != PetState.Hover) AirPhysics(now, dt);
 
             switch (State)
             {
@@ -261,9 +275,47 @@ namespace PuppyPet
                 case PetState.Walk:
                 case PetState.Run:
                 case PetState.Sneak:
-                    if (!StepTowards(dt))
+                    if (!StepTowards(dt)) Arrive(now);
+                    break;
+
+                case PetState.Hover:
+                    if (Airborne)
                     {
-                        Arrive(now);
+                        StepAirTowardsX(dt);
+                        AirPhysics(now, dt);
+                        if (VY < 0f && Y <= _targetY)      // 跳到目标高度：转入悬停
+                        {
+                            Airborne = false;
+                            VY = 0f;
+                        }
+                        else if (VY >= 0f)                 // 抛物线到顶还没够高：就地悬停
+                        {
+                            Airborne = false;
+                            VY = 0f;
+                            if (_targetY < Y) _targetY = Y;
+                        }
+                    }
+                    else if (!StepAirTowards(dt))
+                    {
+                        if (Math.Abs(_targetY - GroundY) < 1.5f)         // 目标是地面：落地休息
+                        {
+                            Y = GroundY;
+                            Airborne = false;
+                            VY = 0f;
+                            Arrive(now);
+                        }
+                        else if (OnGround)
+                        {
+                            Arrive(now);
+                        }
+                        else if (StateTime > 1.6f + (float)_rng.NextDouble() * 3.0f)
+                        {
+                            Decide(now);                                 // 悬一会儿再决定去哪
+                        }
+                    }
+                    else if (StateTime > 14f)
+                    {
+                        GoToGround(now);                                 // 悬太久就回地面
                     }
                     break;
 
@@ -273,8 +325,8 @@ namespace PuppyPet
 
                 case PetState.Happy:
                 case PetState.Scratch:
-                    if (!Hovering && now >= _happyUntil) SetState(PetState.Idle, now);
-                    else if (StateTime > 2.2f + (float)_rng.NextDouble() * 1.8f)
+                    if (!Hovering && now >= _happyUntil) SetState(RestState(), now);
+                    else if (OnGround && StateTime > 2.2f + (float)_rng.NextDouble() * 1.8f)
                     {
                         _happyUntil = now + 1.2;
                         Airborne = true;                    // 开心地小跳一下
@@ -300,6 +352,89 @@ namespace PuppyPet
             {
                 Squash = 1f + (float)Math.Sin(now * 2.2) * 0.012f;
             }
+        }
+
+        void AirPhysics(double now, double dt)
+        {
+            VY += Gravity * (float)dt;
+            Y += VY * (float)dt;
+            if (Y >= GroundY)
+            {
+                Y = GroundY;
+                Airborne = false;
+                VY = 0f;
+                // 被摸着的时候不要抖毛打断互动
+                SetState(Hovering ? PetState.Happy : PetState.Shake, now);
+            }
+        }
+
+        /// <summary>空中上升阶段：只横向靠近目标</summary>
+        void StepAirTowardsX(double dt)
+        {
+            float dx = _targetX - X;
+            if (Math.Abs(dx) < 4f) return;
+            float step = Math.Min(AirSpeed * SpeedScale * (float)dt, Math.Abs(dx));
+            X += dx > 0 ? step : -step;
+            Facing = dx > 0 ? 1 : -1;
+            X = Clamp(X, Bounds.Left + Width * 0.4f, Bounds.Right - Width * 0.4f);
+        }
+
+        /// <summary>空中：朝目标点平滑机动，返回 false 表示已到位</summary>
+        bool StepAirTowards(double dt)
+        {
+            float dx = _targetX - X;
+            float dy = _targetY - Y;
+            float dist = (float)Math.Sqrt(dx * dx + dy * dy);
+            if (dist < 7f) return false;
+            float step = Math.Min(AirSpeed * SpeedScale * (float)dt, dist);
+            X += dx / dist * step;
+            Y += dy / dist * step;
+            if (dx > 0.6f) Facing = 1;
+            else if (dx < -0.6f) Facing = -1;
+            ClampPosition();
+            return (float)Math.Sqrt((_targetX - X) * (_targetX - X) + (_targetY - Y) * (_targetY - Y)) >= 7f;
+        }
+
+        void ClampPosition()
+        {
+            X = Clamp(X, Bounds.Left + Width * 0.4f, Bounds.Right - Width * 0.4f);
+            Y = Clamp(Y, Bounds.Top + Height * 0.55f, GroundY);
+        }
+
+        /// <summary>起跳扑向空中目标（有抛物线的味道，不是凭空飘）</summary>
+        public void LeapTo(float targetX, float targetY, double now)
+        {
+            _targetX = Clamp(targetX, Bounds.Left + Width * 0.4f, Bounds.Right - Width * 0.4f);
+            _targetY = Clamp(targetY, Bounds.Top + Height * 0.6f, GroundY);
+            if (OnGround)
+            {
+                Airborne = true;
+                VY = -(float)Math.Sqrt(2.0 * Gravity * Math.Max(12f, GroundY - _targetY) * 1.03);
+            }
+            else
+            {
+                Airborne = false;
+            }
+            SetState(PetState.Hover, now);
+        }
+
+        /// <summary>飞回地面</summary>
+        public void GoToGround(double now)
+        {
+            if (OnGround) { SetState(PetState.Idle, now); return; }
+            _targetX = Clamp(X + (float)(_rng.NextDouble() * 160 - 80), Bounds.Left + Width * 0.4f, Bounds.Right - Width * 0.4f);
+            _targetY = GroundY;
+            Airborne = false;
+            SetState(PetState.Hover, now);
+        }
+
+        /// <summary>随机一个空中目标点（离地面有高度）</summary>
+        float RandomAirY()
+        {
+            float top = Bounds.Top + Height * 0.8f;
+            float bottom = GroundY - 90f;
+            if (bottom < top) return top;
+            return top + (float)_rng.NextDouble() * (bottom - top);
         }
 
         float CurrentSpeed()
@@ -333,29 +468,58 @@ namespace PuppyPet
                 if (_rng.NextDouble() < 0.45)
                 {
                     _targetX = Clamp(X + (float)(_rng.NextDouble() * 900 - 450), Bounds.Left + Width * 0.4f, Bounds.Right - Width * 0.4f);
-                    SetState(PetState.Run, now);
+                    if (FullScreen && _rng.NextDouble() < 0.35) { LeapTo(_targetX, RandomAirY(), now); return; }
+                    _targetY = GroundY;
+                    Airborne = false;
+                    SetState(OnGround ? PetState.Run : PetState.Hover, now);
                     return;
                 }
                 SetState(PetState.Sit, now);
                 return;
             }
-            SetState(_rng.NextDouble() < 0.45 ? PetState.Sit : PetState.Idle, now);
+            SetState(OnGround ? (_rng.NextDouble() < 0.45 ? PetState.Sit : PetState.Idle) : PetState.Hover, now);
         }
 
         void Decide(double now)
         {
             double sinceTouch = _lastTouch < 0 ? 999 : now - _lastTouch;
 
+            // 只在地面溜达太久？蹦到半空去玩（保证真的会满屏跑）
+            if (FullScreen && OnGround && now - _lastAir > 14.0)
+            {
+                LeapTo(RandomX(), RandomAirY(), now);
+                return;
+            }
+
             // 很久没被理 → 自己跑远去玩
             if (sinceTouch > 22.0 && _rng.NextDouble() < 0.42)
             {
                 _targetX = RandomX();
+                if (FullScreen && _rng.NextDouble() < 0.55)
+                {
+                    LeapTo(_targetX, RandomAirY(), now);
+                    return;
+                }
                 SetState(PetState.Run, now);
                 return;
             }
 
+            // 满屏模式：时不时蹦到半空玩耍
+            if (FullScreen && !OnGround)
+            {
+                double rr = _rng.NextDouble();
+                if (rr < 0.55) { LeapTo(RandomX(), RandomAirY(), now); return; }
+                if (rr < 0.62) { Hop(now, 1.0); _targetY = RandomAirY(); SetState(PetState.Hover, now); return; }
+                GoToGround(now);
+                return;
+            }
+
             double r = _rng.NextDouble();
-            if (r < 0.34)
+            if (FullScreen && r < 0.34)
+            {
+                LeapTo(RandomX(), RandomAirY(), now);      // 一跃而上，蹦到空中某个位置
+            }
+            else if (r < 0.42)
             {
                 _targetX = Clamp(X + (float)(_rng.NextDouble() * 520 - 260), Bounds.Left + Width * 0.4f, Bounds.Right - Width * 0.4f);
                 SetState(PetState.Walk, now);
@@ -392,7 +556,18 @@ namespace PuppyPet
             if (X + dir * 300f < Bounds.Left + Width || X + dir * 300f > Bounds.Right - Width) dir = -dir;
             _targetX = Clamp(X + dir * (320f + (float)_rng.NextDouble() * 620f),
                              Bounds.Left + Width * 0.4f, Bounds.Right - Width * 0.4f);
-            SetState(PetState.Sneak, now);
+            if (OnGround)
+            {
+                _targetY = GroundY;
+                SetState(PetState.Sneak, now);
+            }
+            else
+            {
+                // 半空中被发现要走？直接飞走
+                _targetY = FullScreen && _rng.NextDouble() < 0.5 ? RandomAirY() : GroundY;
+                Airborne = false;
+                SetState(PetState.Hover, now);
+            }
         }
 
         float RandomX()
@@ -412,7 +587,7 @@ namespace PuppyPet
             p.Squash = Squash;
             p.Mood = Mood;
             p.Blink = Blink;
-            p.Lift = Airborne ? Math.Max(0f, GroundY - Y) : 0f;
+            p.Lift = Math.Max(0f, GroundY - Y);
             return p;
         }
 

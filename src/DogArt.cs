@@ -120,6 +120,7 @@ namespace PuppyPet
 
         static void DrawShadow(Graphics g, DogPose pose)
         {
+            if (pose.Lift > 24f) return;      // 悬在半空时地面上不该有影子
             float k = 1f - Math.Min(1f, pose.Lift / 150f) * 0.5f;
             g.FillEllipse(ShadowBrush, BodyCX - 24f * k, GroundY + 1f - 4f * k, 60f * k, 9f * k);
         }
@@ -212,7 +213,8 @@ namespace PuppyPet
         static void DrawLegs(Graphics g, DogPose pose, bool hind)
         {
             float swing = 0f;
-            if (pose.State == PetState.Walk) swing = (float)Math.Sin(pose.Phase * Math.PI * 2.0) * 8f;
+            if (pose.State == PetState.Hover) swing = (float)Math.Sin(pose.T * 7.0 + (hind ? 0f : 1.6f)) * 7f;
+            else if (pose.State == PetState.Walk) swing = (float)Math.Sin(pose.Phase * Math.PI * 2.0) * 8f;
             else if (pose.State == PetState.Run) swing = (float)Math.Sin(pose.Phase * Math.PI * 2.0) * 15f;
             else if (pose.State == PetState.Sneak) swing = (float)Math.Sin(pose.Phase * Math.PI * 2.0) * 5f;
 
@@ -236,6 +238,11 @@ namespace PuppyPet
                 {
                     footY = GroundY + 6f;
                     x += (i == 0 ? -5f : 5f);
+                }
+                else if (pose.State == PetState.Hover)
+                {
+                    // 空中踩空气：腿一伸一缩
+                    footY = GroundY - 2f + (float)Math.Sin(pose.T * 7.0 + i * 1.6f) * 5f;
                 }
                 else if (pose.State == PetState.Run || pose.State == PetState.Walk || pose.State == PetState.Sneak)
                 {
@@ -286,6 +293,7 @@ namespace PuppyPet
             else if (pose.State == PetState.Happy) flap = (float)Math.Sin(pose.T * 12.0) * 12f - 8f;
             else if (pose.State == PetState.Scratch) flap = (float)Math.Sin(pose.T * 16.0) * 14f + 10f;
             else if (pose.State == PetState.Drag || pose.State == PetState.Fall) flap = -24f;
+            else if (pose.State == PetState.Hover) flap = -14f + (float)Math.Sin(pose.T * 9.0) * 8f;
             else if (pose.State == PetState.Sneak) flap = 8f;
             else if (pose.State == PetState.Sleep) flap = 14f;
             else flap = (float)Math.Sin(pose.T * 1.7) * 4f;
@@ -389,7 +397,7 @@ namespace PuppyPet
                 g.FillEllipse(HighlightBrush, nx - 3f, ny - 2.5f, 3.4f, 2.2f);
             }
 
-            if (pose.State == PetState.Happy || pose.State == PetState.Run)
+            if (pose.State == PetState.Happy || pose.State == PetState.Run || pose.State == PetState.Hover)
             {
                 using (GraphicsPath m = new GraphicsPath())
                 {
@@ -468,6 +476,19 @@ namespace PuppyPet
                         {
                             g.DrawString("z", f, b, 76f + i * 9f + t * 6f, 52f - t * 26f);
                         }
+                    }
+                }
+            }
+            else if (pose.State == PetState.Hover)
+            {
+                for (int i = 0; i < 3; i++)
+                {
+                    float t = (pose.T * 1.3f + i * 0.33f) % 1f;
+                    int alpha = (int)(110 * (1f - t));
+                    if (alpha < 10) continue;
+                    using (SolidBrush b = new SolidBrush(Color.FromArgb(alpha, 235, 228, 210)))
+                    {
+                        g.FillEllipse(b, BodyCX - 16f + i * 13f, GroundY - 2f + t * 10f, 14f * (1f - t * 0.3f), 6f);
                     }
                 }
             }

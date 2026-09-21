@@ -112,24 +112,29 @@ namespace PuppyPet
             Step(b, 5.0, 0.03);
             Check("移开后 5 秒还没跑（耐心等着被摸）", b.State != PetState.Sneak, b.State.ToString());
             Step(b, 6.5, 0.03);
-            Check("移开后约 10 秒开始偷偷溜走", b.State == PetState.Sneak || b.IsMoving, b.State.ToString());
+            Check("移开后约 10 秒开始偷偷溜走",
+                b.State == PetState.Sneak || b.State == PetState.Hover || b.IsMoving, b.State.ToString());
 
-            bool sawSneak = false;
             float sneaked = 0f;
             for (int i = 0; i < 900; i++)      // 再看 27 秒
             {
                 _t += 0.03;
-                float before = b.X;
+                float bx = b.X, by = b.Y;
                 b.Update(_t, 0.03);
-                if (b.State == PetState.Sneak) { sawSneak = true; sneaked += Math.Abs(b.X - before); }
+                if (b.State == PetState.Sneak || b.State == PetState.Hover)
+                {
+                    sneaked += Math.Abs(b.X - bx) + Math.Abs(b.Y - by);
+                }
             }
-            Check("确实偷偷挪动了一段距离", sawSneak && sneaked > 150f, "累计移动=" + sneaked.ToString("0"));
+            Check("确实偷偷挪动了一段距离", sneaked > 150f, "累计移动=" + sneaked.ToString("0"));
 
             Section("行为：长时间无人理 → 自己跑动但不越界");
             _t = 0;
             b = NewBrain(2024);
             bool inBounds = true;
             bool sawRun = false, sawSleep = false, sawSit = false;
+            bool sawAir = false;
+            float minY = float.MaxValue;
             double minX = double.MaxValue, maxX = double.MinValue;
             for (int i = 0; i < 6000; i++)     // 180 秒
             {
@@ -138,6 +143,8 @@ namespace PuppyPet
                 if (b.State == PetState.Run) sawRun = true;
                 if (b.State == PetState.Sleep) sawSleep = true;
                 if (b.State == PetState.Sit) sawSit = true;
+                if (b.State == PetState.Hover) sawAir = true;
+                if (b.Y < minY) minY = b.Y;
                 if (b.X < 0 || b.X > 1920) inBounds = false;
                 if (b.Y > b.GroundY + 0.5f) inBounds = false;
                 if (b.X < minX) minX = b.X;
@@ -146,8 +153,52 @@ namespace PuppyPet
             Check("180 秒内始终待在屏幕里", inBounds);
             Check("会自己跑起来玩", sawRun);
             Check("会自己坐下", sawSit);
-            Check("会自己睡觉", sawSleep);
+            Check("会蹦到半空（满屏跑动）", sawAir);
+            Check("最高能跑到屏幕上半部分", minY < b.GroundY - 200f, "最高到 y=" + minY.ToString("0") + "（地面 " + b.GroundY.ToString("0") + "）");
             Check("活动范围够大（不是原地抖）", maxX - minX > 300, "范围=" + (maxX - minX).ToString("0"));
+
+            bool anySleep = false;
+            for (int seed = 1; seed <= 6 && !anySleep; seed++)
+            {
+                _t = 0;
+                DogBrain bs = NewBrain(seed * 137);
+                for (int i = 0; i < 20000 && !anySleep; i++)   // 每个种子最多模拟 600 秒
+                {
+                    _t += 0.03;
+                    bs.Update(_t, 0.03);
+                    if (bs.State == PetState.Sleep) anySleep = true;
+                }
+            }
+            Check("长时间独处时会自己睡觉", anySleep);
+
+            Section("行为：只在底部模式（关闭满屏）");
+            _t = 0;
+            DogBrain ground = NewBrain(88);
+            ground.FullScreen = false;
+            bool stayedOnGround = true;
+            for (int i = 0; i < 6000; i++)
+            {
+                _t += 0.03;
+                ground.Update(_t, 0.03);
+                if (ground.Y < ground.GroundY - 0.6f && !ground.Airborne) stayedOnGround = false;
+            }
+            Check("关闭满屏后始终待在地面线上", stayedOnGround);
+
+            Section("行为：悬停时会有轻微上下浮动");
+            _t = 0;
+            DogBrain hover = NewBrain(5);
+            hover.LeapTo(hover.Bounds.Left + 900f, hover.Bounds.Top + 300f, _t);
+            Step(hover, 3.0, 0.03);
+            Check("确实悬停在空中", hover.State == PetState.Hover && !hover.OnGround,
+                hover.State + " y=" + hover.Y.ToString("0"));
+            float v1 = hover.VisualY, v2;
+            _t += 0.6; hover.Update(_t, 0.016);
+            v2 = hover.VisualY;
+            Check("视觉位置带浮动（画面更活）", Math.Abs(v1 - v2) > 0.2f, "v1=" + v1.ToString("0.0") + " v2=" + v2.ToString("0.0"));
+            Check("空中也能被鼠标摸到", hover.HitTest(hover.X, hover.Y));
+            hover.GoToGround(_t);
+            Step(hover, 20.0, 0.03);
+            Check("玩够了会自己回到地面", hover.OnGround, "y=" + hover.Y.ToString("0"));
 
             Section("行为：被拎起来 → 松手落地 → 抖毛");
             _t = 0;
@@ -205,9 +256,10 @@ namespace PuppyPet
 
             // ---------------------------------------------------------- 绘制
             Section("绘制：每个姿态都能画出来");
-            string[] names = { "Idle", "Walk", "Run", "Sit", "Sleep", "Happy", "Scratch", "Sneak", "Drag", "Fall", "Shake" };
+            string[] names = { "Idle", "Walk", "Run", "Sit", "Sleep", "Happy", "Scratch", "Sneak", "Hover", "Drag", "Fall", "Shake" };
             PetState[] states = { PetState.Idle, PetState.Walk, PetState.Run, PetState.Sit, PetState.Sleep,
-                                  PetState.Happy, PetState.Scratch, PetState.Sneak, PetState.Drag, PetState.Fall, PetState.Shake };
+                                  PetState.Happy, PetState.Scratch, PetState.Sneak, PetState.Hover,
+                                  PetState.Drag, PetState.Fall, PetState.Shake };
             bool allOk = true, allInk = true, allInside = true;
             string detail = "";
             for (int i = 0; i < states.Length; i++)
@@ -225,7 +277,7 @@ namespace PuppyPet
                 if (cov < 0.02 || cov > 0.65) { allInk = false; detail = names[i] + " 覆盖率=" + cov.ToString("0.00"); }
                 if (border > 0.10) { allInside = false; detail = names[i] + " 贴边率=" + border.ToString("0.00"); }
             }
-            Check("11 种姿态全部绘制成功且不抛异常", allOk, detail);
+            Check("12 种姿态全部绘制成功且不抛异常", allOk, detail);
             Check("每种姿态都有合理的图形覆盖率(2%~65%)", allInk, detail);
             Check("图形没有大量溢出画布边缘", allInside, detail);
 
@@ -286,8 +338,8 @@ namespace PuppyPet
                 p.Squash = 1f;
                 p.Mood = state == PetState.Happy || state == PetState.Scratch ? 1f : 0.3f;
                 p.Blink = false;
-                p.Lift = state == PetState.Fall ? 40f : 0f;
-                p.Airborne = state == PetState.Fall;
+                p.Lift = state == PetState.Fall ? 40f : (state == PetState.Hover ? 120f : 0f);
+                p.Airborne = state == PetState.Fall || state == PetState.Hover;
                 DogArt.Draw(g, p);
             }
             Measure(bmp, out coverage, out border);
@@ -434,9 +486,10 @@ namespace PuppyPet
         // ---------------------------------------------------------- 姿态总览图
         static void Snapshot(string path)
         {
-            string[] names = { "Idle", "Walk", "Run", "Sit", "Sleep", "Happy", "Scratch", "Sneak", "Drag", "Fall", "Shake" };
+            string[] names = { "Idle", "Walk", "Run", "Sit", "Sleep", "Happy", "Scratch", "Sneak", "Hover", "Drag", "Fall", "Shake" };
             PetState[] states = { PetState.Idle, PetState.Walk, PetState.Run, PetState.Sit, PetState.Sleep,
-                                  PetState.Happy, PetState.Scratch, PetState.Sneak, PetState.Drag, PetState.Fall, PetState.Shake };
+                                  PetState.Happy, PetState.Scratch, PetState.Sneak, PetState.Hover,
+                                  PetState.Drag, PetState.Fall, PetState.Shake };
             float[] phases = { 0f, 0.25f, 0.5f, 0.75f };
             int cols = phases.Length, rows = states.Length;
             int cw = DogArt.CanvasW, ch = DogArt.CanvasH, label = 20;
@@ -469,8 +522,8 @@ namespace PuppyPet
                                 p.Facing = 1;
                                 p.Squash = 1f;
                                 p.Mood = (states[r] == PetState.Happy || states[r] == PetState.Scratch) ? 1f : 0.35f;
-                                p.Lift = states[r] == PetState.Fall ? 46f : 0f;
-                                p.Airborne = states[r] == PetState.Fall;
+                                p.Lift = states[r] == PetState.Fall ? 46f : (states[r] == PetState.Hover ? 120f : 0f);
+                                p.Airborne = states[r] == PetState.Fall || states[r] == PetState.Hover;
                                 DogArt.Draw(g, p);
                                 g.Restore(st);
                                 g.FillRectangle(new SolidBrush(Color.FromArgb(30, 255, 255, 255)), x, y, cw - 1, label - 1);
